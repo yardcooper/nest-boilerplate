@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const httpPort = parseInt(process.env.PORT);
 
   const config = new DocumentBuilder()
     .setTitle('Cats example')
@@ -14,6 +15,6 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
-  await app.listen(3000);
+  await app.listen(httpPort);
 }
 bootstrap();
