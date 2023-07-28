@@ -13,7 +13,7 @@ import { UpdateCatDto } from './dto/update-cat.dto';
 import { Roles } from 'src/roles/role.decorator';
 import { Role } from 'src/roles/role.enum';
 import { Public } from 'src/auth/auth.decorator';
-
+import { FindOneParams } from './params/find-one-cat.params';
 @Controller('cats')
 export class CatsController {
   constructor(private readonly catsService: CatsService) {}
@@ -31,8 +31,8 @@ export class CatsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.catsService.findOne(+id);
+  findOne(@Param() params: FindOneParams) {
+    return this.catsService.findOne(params.id);
   }
 
   @Patch(':id')
