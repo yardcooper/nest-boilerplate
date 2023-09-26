@@ -1,0 +1,357 @@
+# This workflow configures repo settings such as access, branch protection, secrets, etc.
+# It is designed to promote a consistent configuration across all platform repos.
+# Run it initially at repo setup and then as needed to update settings if they drift.
+
+name: setup repository
+
+on:
+  workflow_call:
+    inputs:
+      branches:
+        type: string
+        description: 'list of long lived branches to apply branch protection rules to. format is comma delimited string'
+        required: false
+        default: 'develop, main'
+      default-branch:
+        type: string
+        description: 'The default branch to set for the repo'
+        required: false
+        default: 'develop'
+      team:
+        type: string
+        description: "Github team name(s) to add to the repo with write perms. If more than one team, format is comma delimited string"
+        required: false
+      admins:
+        type: string
+        description: "Github usernames to add as admins in comma delimited string fromat"
+        required: false
+      branch-age:
+        type: string
+        description: "days to keep merged branches before deleting"
+        required: false
+        default: '30'
+      required-checks:
+        type: string
+        description: |
+          "List of required checks to apply to branches. Format is comma delimited string. 
+          Examples are 'Codacy Static Code Analysis, Codacy Coverage'"
+        required: false
+      actions-to-run:
+        type: string
+        description: "Allows you to select list of steps to run when manually triggering. Set this as a choice in the caller workflow"
+        required: false
+        default: ''
+      deployment-environments:
+        type: string
+        description: |
+          "json formatted string object representing a deployment environment to create. Includes url and list of github ID approvers.
+          Example: '{"name":"develop", "branch":"optionally set", "url":"https://dev.example.com", "approvers":["githubuser","githubteam"]}'"
+        required: false
+      
+jobs:
+  repo-setup:
+    runs-on: ubuntu-20.04
+    env:
+      GITHUB_TOKEN: ${{ secrets.SERVICE_ACCOUNT_PAT }}
+      BRANCHES: ${{ inputs.branches }}
+      DEFAULT_BRANCH: ${{ inputs.default-branch }}
+      BRANCH_AGE: ${{ inputs.branch-age }}
+      ADMINS: ${{ inputs.admins }}
+      TEAMS: ${{ inputs.team }}
+      REQUIRED_CHECKS: ${{ inputs.required-checks }}
+      DEPLOY_ENVS: ${{ inputs.deployment-environments }}  
+    steps:
+      - name: checkout
+        uses: actions/checkout@v3
+        if: >-
+            contains(github.event.inputs.actions-to-run, 'clean_readme')
+      - name: clean_readme
+        shell: bash
+        if: >-
+          contains(github.event.inputs.actions-to-run, 'clean_readme')
+        run: |
+          if [ -f README.md ]; then
+            echo "Cleaning README file..."
+            echo "" > README.md
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git config --global user.name "github-actions[bot]"
+            git commit README.md -m "Clean README file"
+            git push -f
+          else
+            echo "No README file found"
+          fi
+
+      - name: branch_protection
+        uses: actions/github-script@v6
+        if: >-
+          contains('["all", "branch_protection"]', github.event.inputs.actions-to-run)
+        with:
+          github-token: ${{ env.GITHUB_TOKEN }}
+          script: |
+            const { BRANCHES, DEFAULT_BRANCH, REQUIRED_CHECKS } = process.env;
+            function stringToArray(str) {
+              if (str) {
+                const substrings = str.split(',');
+                return substrings.map(item => item.trim());
+              } else {
+                return [];
+              }
+            }
+            
+            strict_flag = REQUIRED_CHECKS ? true : false;
+
+            const branch_array = stringToArray(BRANCHES);
+            const checks = stringToArray(REQUIRED_CHECKS);
+            const checks_obj_array = [];
+
+            if (checks) {
+              const checks_obj_array = checks.map(item => ({ context: item }));
+            };            
+
+            for (const branch of branch_array) {
+              await github.rest.repos.updateBranchProtection({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: `${branch}`,
+                required_status_checks: {
+                  strict: strict_flag,
+                  checks: checks_obj_array
+                },
+                enforce_admins: false,
+                required_pull_request_reviews: {
+                    requiredApprovingReviewCount: 1,
+                    dismissStaleReviews: true
+                },
+                restrictions: null
+              });
+            };
+
+      - name: set_default_branch
+        uses: actions/github-script@v6
+        if: >-
+          contains('["all", "set_default_branch"]', github.event.inputs.actions-to-run)
+        with:
+          github-token: ${{ env.GITHUB_TOKEN }}
+          script: |
+            const { DEFAULT_BRANCH } = process.env;
+            await github.rest.repos.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              default_branch: DEFAULT_BRANCH
+            });
+
+      - name: grant_team_write
+        uses: actions/github-script@v6
+        if: >-
+          contains('["all", "grant_team_write"]', github.event.inputs.actions-to-run )
+        with:
+          github-token: ${{ env.GITHUB_TOKEN }}
+          script: |
+            const { TEAMS } = process.env;
+            const teams_array = TEAMS ? TEAMS.split(',') : [];
+
+            for (const team of teams_array) {
+              let slug = team.replace(/\s+/g, '-').toLowerCase(); //aproximate slug
+
+              await github.rest.teams.addOrUpdateRepoPermissionsInOrg({
+                org: context.repo.owner,
+                team_slug: slug,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                permission: 'push'
+              })};
+
+      - name: create_deploy_envs
+        uses: actions/github-script@v6
+        if: >-
+          contains('["all", "create_deploy_envs"]', github.event.inputs.actions-to-run)
+        with:
+          github-token: ${{ env.GITHUB_TOKEN }}
+          debug: false
+          script: |
+            const { DEPLOY_ENVS } = process.env;
+            const envs_array = JSON.parse(DEPLOY_ENVS);
+            const repository_id = context.payload.repository.id;
+
+            for (const env of envs_array) {
+            //look up user and team names
+            var approverIds = [];
+            for (const approver of env.approvers) {
+              if (approver.type == "Team") {
+                await github.rest.teams
+                  .getByName({
+                    org: context.repo.owner,
+                    team_slug: approver.name,
+                  })
+                  .then(({ data }) => {
+                    approverIds.push({ id: data.id, type: "Team" });
+                  });
+              } else {
+                if (approver.type == "User") {
+                  await github.rest.users
+                    .getByUsername({
+                      username: approver.name,
+                    })
+                    .then(({ data }) => {
+                      approverIds.push({ id: data.id, type: "User" });
+                    });
+                }
+              }
+              //create environment
+              await github.rest.repos.createOrUpdateEnvironment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                environment_name: env.name,
+                wait_timer: env.delay || 0,
+                reviewers: approverIds,
+                deployment_branch_policy: {
+                  protected_branches: false,
+                  custom_branch_policies: true,
+                  branch_policies: [
+                    {
+                      pattern: env.branch,
+                      url: env.url,
+                      requires_code_owner_reviews: false,
+                      requires_strict_status_checks: true,
+                      requires_approving_reviews: true,
+                      dismisses_stale_reviews: true,
+                      required_approving_review_count: 2,
+                      admin_enforcement: true,
+                    },
+                  ],
+                },
+              });
+              //create environment variables
+              console.log(env.variables);
+              for (let i = 0; i < env.variables.length; i++) {
+                console.log(env.variables[i]);
+                            
+                //check if variable already exists
+                let status = null;
+                try {
+                  response = await github.request(
+                    "GET /repositories/{repository_id}/environments/{environment_name}/variables/{name}",
+                    {
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      repository_id: repository_id,
+                      environment_name: env.name,
+                      name: env.variables[i].name,
+                    }
+                  );
+                  status = response.status;
+                  console.log("variable was found");
+                } catch (error) {
+                  console.log("variable was not found", error);
+                };
+                            
+                if (status === 200) {
+                  // Variable exists, attempt to update it
+                  try {
+                    await github.request(
+                      "PATCH /repositories/{repository_id}/environments/{environment_name}/variables/{name}",
+                      {
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        repository_id: repository_id,
+                        environment_name: env.name,
+                        name: env.variables[i].name,
+                        value: env.variables[i].value
+                      }
+                    );
+                    console.log("variable updated");
+                  } catch (error) {
+                    console.log("Error updating variable:", error);
+                  };
+                } else {
+                  // variable does not exist; create
+                  try {
+                    await github.request(
+                      "POST /repositories/{repository_id}/environments/{environment_name}/variables",
+                      {
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        repository_id: repository_id,
+                        environment_name: env.name,
+                        name: env.variables[i].name,
+                        value: env.variables[i].value
+                      }
+                    )
+                    console.log("variable created");
+                  } catch (error) {
+                    console.log("Error creating environment variable:", error);
+                    };
+                  }
+                }
+              }
+            }
+            
+      - name: add_admins
+        uses: actions/github-script@v6
+        if: >-
+          contains('["all", "add_admins"]', github.event.inputs.actions-to-run)
+        with:
+          github-token: ${{ env.GITHUB_TOKEN }}
+          script: |
+            const { ADMINS } = process.env;
+            const users = ADMINS ? ADMINS.split(',') : [];
+            
+            if (users) {
+              for (const user of users) {
+                await github.rest.repos.addCollaborator({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: user.trim(),
+                  permission: 'admin'
+                });
+            }};
+        
+      - name: clean_stale_branches
+        uses: actions/github-script@v6
+        if: >-
+            contains('["all", "clean_stale_branches"]', github.event.inputs.actions-to-run)
+        with:
+          github-token: ${{ env.GITHUB_TOKEN }}
+          script: |
+            const { BRANCH_AGE, BRANCHES  } = process.env;
+            const branch_array =  BRANCHES ? BRANCHES.split(',') : []; 
+            const branchesToExclude = branch_array.map(branch => branch.trim());
+            const currentDate = new Date();
+            const olderBranches = [];
+            
+            const { data: branches } = await github.rest.repos.listBranches({
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+            
+            for (const branch of branches) {
+              const { data: commits } = await github.rest.repos.listCommits({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: branch.name
+              });
+            
+              if (commits.length >= 0) {
+                const commitDate = new Date(commits[0].commit.committer.date);
+                const timeDiff = Math.abs(currentDate - commitDate);
+                const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+            
+                if (daysDiff > BRANCH_AGE && !branchesToExclude.includes(branch.name)) {
+                  console.log(`Branch ${branch.name} last had a commit ${daysDiff} days ago and will be deleted`);
+                  olderBranches.push(branch.name);
+                }
+                else {
+                  console.log(`Branch ${branch.name} last had a commit ${daysDiff} days ago and will not be deleted`);
+                }  
+              }};
+
+            console.log(`Branches to be deleted are ${olderBranches}`)
+            
+            for (const branch of olderBranches) {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${branch}`
+              });
+              console.log(`\n---\nDeleted branch: ${branch}`);
+            };
