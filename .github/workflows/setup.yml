@@ -13,6 +13,5 @@ jobs:
       actions-to-run: 'all'
       branches: 'master, develop'
       default-branch: 'develop'
-      team: 'ASD'
-      admins: 'malipui, sjayakandan'
+      admins: 'yardcooper, growingdream'
       branch-age: '30'
