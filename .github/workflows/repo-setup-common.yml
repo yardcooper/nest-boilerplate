@@ -19,15 +19,15 @@ on:
         default: 'develop'
       team:
         type: string
-        description: "Github team name(s) to add to the repo with write perms. If more than one team, format is comma delimited string"
+        description: 'Github team name(s) to add to the repo with write perms. If more than one team, format is comma delimited string'
         required: false
       admins:
         type: string
-        description: "Github usernames to add as admins in comma delimited string fromat"
+        description: 'Github usernames to add as admins in comma delimited string fromat'
         required: false
       branch-age:
         type: string
-        description: "days to keep merged branches before deleting"
+        description: 'days to keep merged branches before deleting'
         required: false
         default: '30'
       required-checks:
@@ -38,7 +38,7 @@ on:
         required: false
       actions-to-run:
         type: string
-        description: "Allows you to select list of steps to run when manually triggering. Set this as a choice in the caller workflow"
+        description: 'Allows you to select list of steps to run when manually triggering. Set this as a choice in the caller workflow'
         required: false
         default: ''
       deployment-environments:
@@ -47,24 +47,24 @@ on:
           "json formatted string object representing a deployment environment to create. Includes url and list of github ID approvers.
           Example: '{"name":"develop", "branch":"optionally set", "url":"https://dev.example.com", "approvers":["githubuser","githubteam"]}'"
         required: false
-      
+
 jobs:
   repo-setup:
     runs-on: ubuntu-20.04
     env:
-      GITHUB_TOKEN: ${{ secrets.SERVICE_ACCOUNT_PAT }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BRANCHES: ${{ inputs.branches }}
       DEFAULT_BRANCH: ${{ inputs.default-branch }}
       BRANCH_AGE: ${{ inputs.branch-age }}
       ADMINS: ${{ inputs.admins }}
       TEAMS: ${{ inputs.team }}
       REQUIRED_CHECKS: ${{ inputs.required-checks }}
-      DEPLOY_ENVS: ${{ inputs.deployment-environments }}  
+      DEPLOY_ENVS: ${{ inputs.deployment-environments }}
     steps:
       - name: checkout
         uses: actions/checkout@v3
         if: >-
-            contains(github.event.inputs.actions-to-run, 'clean_readme')
+          contains(github.event.inputs.actions-to-run, 'clean_readme')
       - name: clean_readme
         shell: bash
         if: >-
@@ -97,7 +97,7 @@ jobs:
                 return [];
               }
             }
-            
+
             strict_flag = REQUIRED_CHECKS ? true : false;
 
             const branch_array = stringToArray(BRANCHES);
@@ -285,7 +285,7 @@ jobs:
                 }
               }
             }
-            
+
       - name: add_admins
         uses: actions/github-script@v6
         if: >-
@@ -295,7 +295,7 @@ jobs:
           script: |
             const { ADMINS } = process.env;
             const users = ADMINS ? ADMINS.split(',') : [];
-            
+
             if (users) {
               for (const user of users) {
                 await github.rest.repos.addCollaborator({
@@ -305,11 +305,11 @@ jobs:
                   permission: 'admin'
                 });
             }};
-        
+
       - name: clean_stale_branches
         uses: actions/github-script@v6
         if: >-
-            contains('["all", "clean_stale_branches"]', github.event.inputs.actions-to-run)
+          contains('["all", "clean_stale_branches"]', github.event.inputs.actions-to-run)
         with:
           github-token: ${{ env.GITHUB_TOKEN }}
           script: |
@@ -318,24 +318,24 @@ jobs:
             const branchesToExclude = branch_array.map(branch => branch.trim());
             const currentDate = new Date();
             const olderBranches = [];
-            
+
             const { data: branches } = await github.rest.repos.listBranches({
               owner: context.repo.owner,
               repo: context.repo.repo
             });
-            
+
             for (const branch of branches) {
               const { data: commits } = await github.rest.repos.listCommits({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 sha: branch.name
               });
-            
+
               if (commits.length >= 0) {
                 const commitDate = new Date(commits[0].commit.committer.date);
                 const timeDiff = Math.abs(currentDate - commitDate);
                 const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-            
+
                 if (daysDiff > BRANCH_AGE && !branchesToExclude.includes(branch.name)) {
                   console.log(`Branch ${branch.name} last had a commit ${daysDiff} days ago and will be deleted`);
                   olderBranches.push(branch.name);
@@ -346,7 +346,7 @@ jobs:
               }};
 
             console.log(`Branches to be deleted are ${olderBranches}`)
-            
+
             for (const branch of olderBranches) {
               await github.rest.git.deleteRef({
                 owner: context.repo.owner,
