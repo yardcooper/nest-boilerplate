@@ -52,7 +52,7 @@ jobs:
   repo-setup:
     runs-on: ubuntu-20.04
     env:
-      GITHUB_TOKEN: ${{ secrets.MY_PAT }}
+      GITHUB_TOKEN: ${{ secrets.SERVICE_ACCOUNT_PAT }}
       BRANCHES: ${{ inputs.branches }}
       DEFAULT_BRANCH: ${{ inputs.default-branch }}
       BRANCH_AGE: ${{ inputs.branch-age }}
