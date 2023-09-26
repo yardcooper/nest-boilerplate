@@ -7,7 +7,7 @@ on:
 
 jobs:
   common:
-    uses: yardcooper/workflows-common/.github/workflows/repo-setup-common.yml@master
+    uses: ./.github/workflows/repo-setup-common.yml
     secrets: inherit
     with:
       actions-to-run: 'all'
